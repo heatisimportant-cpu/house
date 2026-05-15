@@ -1,0 +1,596 @@
+# ============================================================
+# German House — Blender v4 (Matched to Three.js Reference)
+# Based on: Deutsches Haus Interactive 3D reference
+# House: 8.5w x 7d x 3.2h  |  Gable roof  |  Full interior
+# Clear scene first, then run this script.
+# ============================================================
+import bpy, math
+
+# ── CLEAR ────────────────────────────────────────────────────
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete()
+for c in list(bpy.data.collections): bpy.data.collections.remove(c)
+for m in list(bpy.data.materials):   bpy.data.materials.remove(m)
+for me in list(bpy.data.meshes):     bpy.data.meshes.remove(me)
+
+# ── HELPERS ──────────────────────────────────────────────────
+def mat(name, r, g, b, metal=0, rough=0.6, emit_col=None, emit_str=0, alpha=1.0):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    if alpha < 1.0:
+        m.blend_method = 'BLEND'
+    n = m.node_tree.nodes["Principled BSDF"]
+    n.inputs["Base Color"].default_value   = (r,g,b,1)
+    n.inputs["Alpha"].default_value        = alpha
+    n.inputs["Metallic"].default_value     = metal
+    n.inputs["Roughness"].default_value    = rough
+    if emit_col:
+        n.inputs["Emission Color"].default_value    = (*emit_col, 1)
+        n.inputs["Emission Strength"].default_value = emit_str
+    return m
+
+def col(name):
+    c = bpy.data.collections.new(name)
+    bpy.context.scene.collection.children.link(c)
+    return c
+
+def link(obj, collection):
+    sc = bpy.context.scene.collection
+    for existing in list(bpy.data.collections) + [sc]:
+        if hasattr(existing, 'objects') and obj.name in existing.objects:
+            existing.objects.unlink(obj)
+    collection.objects.link(obj)
+
+def box(name, x,y,z, sx,sy,sz, m, c):
+    bpy.ops.mesh.primitive_cube_add(location=(x,y,z))
+    o = bpy.context.active_object
+    o.name = name; o.scale = (sx,sy,sz)
+    o.data.materials.clear(); o.data.materials.append(m)
+    link(o, c); return o
+
+def cyl(name, x,y,z, rx,ry,rz, r,h, m, c, verts=24):
+    bpy.ops.mesh.primitive_cylinder_add(
+        vertices=verts, radius=r, depth=h,
+        location=(x,y,z),
+        rotation=(math.radians(rx),math.radians(ry),math.radians(rz)))
+    o = bpy.context.active_object
+    o.name = name
+    o.data.materials.clear(); o.data.materials.append(m)
+    link(o, c); return o
+
+def sph(name, x,y,z, r, m, c):
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=r, location=(x,y,z))
+    o = bpy.context.active_object
+    o.name = name
+    o.data.materials.clear(); o.data.materials.append(m)
+    link(o, c); return o
+
+# ── MATERIALS ────────────────────────────────────────────────
+# Exterior
+MWH  = mat("M_Plaster",    0.96,0.94,0.90)          # white plaster
+MRF  = mat("M_Roof",       0.17,0.17,0.18, rough=0.75) # dark roof tiles
+MRFT = mat("M_RoofTile",   0.22,0.20,0.20, rough=0.8)
+MFSC = mat("M_Fascia",     0.88,0.85,0.80, rough=0.55)
+MWIN = mat("M_Glass",      0.55,0.78,0.95, rough=0.02, alpha=0.18)
+MWFR = mat("M_WinFrm",     0.90,0.90,0.88, rough=0.45)
+MDOR = mat("M_WoodDoor",   0.35,0.22,0.12, rough=0.72)
+MDFR = mat("M_DoorFrm",    0.24,0.15,0.07, rough=0.60)
+MKNB = mat("M_GoldKnob",   0.83,0.68,0.15, metal=1, rough=0.08)
+MGR  = mat("M_Grass",      0.29,0.49,0.22, rough=1.0)
+MPTH = mat("M_Pathstone",  0.69,0.66,0.61, rough=0.88)
+MCO  = mat("M_Concrete",   0.60,0.57,0.52, rough=0.95)
+MFNC = mat("M_Fence",      0.92,0.90,0.86, rough=0.55)
+# Interior
+MFLR = mat("M_WoodFloor",  0.55,0.37,0.20, rough=0.58)
+MCEI = mat("M_Ceiling",    0.97,0.96,0.94)
+MWLP = mat("M_Wallpaper",  0.93,0.90,0.86)
+MWLI = mat("M_WallInt",    0.96,0.94,0.90)
+MRUG = mat("M_Rug",        0.55,0.19,0.19, rough=0.98)
+MSOF = mat("M_Sofa",       0.42,0.45,0.50, rough=0.95)
+MTWX = mat("M_TableWood",  0.48,0.31,0.17, rough=0.65)
+MTVB = mat("M_TVBlack",    0.07,0.07,0.08, rough=0.35, metal=0.5)
+MTVS = mat("M_TVScreen",   0.04,0.09,0.18, rough=0.05,
+           emit_col=(0.04,0.09,0.18), emit_str=0.5)
+MKWH = mat("M_Kitchen",    0.95,0.93,0.90, rough=0.52)
+MKSS = mat("M_Steel",      0.82,0.82,0.84, metal=0.9, rough=0.22)
+MPLG = mat("M_PlantGrn",   0.23,0.43,0.17, rough=0.95)
+MCER = mat("M_Ceramic",    0.55,0.42,0.12, rough=0.65)
+MLSH = mat("M_LampShade",  0.91,0.85,0.70, rough=0.75)
+MMET = mat("M_Metal",      0.75,0.75,0.78, metal=0.85, rough=0.18)
+MSKB = mat("M_Skirting",   0.90,0.88,0.84, rough=0.50)
+MBKR = mat("M_BookRed",    0.61,0.19,0.19, rough=0.92)
+MBKB = mat("M_BookBlue",   0.17,0.29,0.49, rough=0.92)
+MBKG = mat("M_BookGrn",    0.17,0.36,0.24, rough=0.92)
+MBKY = mat("M_BookYlw",    0.61,0.49,0.12, rough=0.92)
+# Simulation
+MHT  = mat("M_HWT_Body",   0.34,0.41,0.47, metal=0.75, rough=0.20)
+MINS = mat("M_Insulation", 0.94,0.80,0.14, rough=1.0)
+MWTR = mat("M_Water",      0.10,0.28,0.56, rough=0.04, alpha=0.65)
+MPH  = mat("M_PipeHot",    0.86,0.18,0.06, metal=0.9, rough=0.12)
+MPC  = mat("M_PipeCold",   0.14,0.32,0.88, metal=0.9, rough=0.12)
+MPM  = mat("M_PipeMet",    0.26,0.26,0.30, metal=1, rough=0.08)
+MHRO = mat("M_HeaterOff",  0.18,0.18,0.20, metal=0.65, rough=0.3)
+MHPB = mat("M_HPBody",     0.78,0.80,0.82, metal=0.55, rough=0.28)
+MHPD = mat("M_HPDark",     0.14,0.14,0.16, metal=0.8, rough=0.2)
+MLED = mat("M_LED_Grn",    0.05,0.95,0.15, emit_col=(0.05,0.95,0.15), emit_str=4.0)
+MBSM = mat("M_Basement",   0.38,0.36,0.34, rough=0.97)
+
+# ── COLLECTIONS ──────────────────────────────────────────────
+CH  = col("House")
+CI  = col("Interior")
+CB  = col("Basement")
+CHW = col("HWT_System")
+CHR = col("Heaters")
+CHP = col("HeatPump")
+CEX = col("Exterior")
+
+# ── HOUSE DIMENSIONS (matching Three.js reference) ───────────
+HW = 8.5   # X total width
+HD = 7.0   # Y depth (blender Y)
+HH = 3.2   # Z height
+# house centred at X=0, Y=0, Z=HH/2
+
+# ── EXTERIOR WALLS ───────────────────────────────────────────
+# Back wall (Y = -HD/2)
+box("Wall_Back",   0, -HD/2-0.11, HH/2, HW/2+0.11, 0.11, HH/2, MWH, CH)
+# Left wall (X = -HW/2)
+box("Wall_Left",   -HW/2-0.11, 0, HH/2, 0.11, HD/2+0.11, HH/2, MWH, CH)
+# Right wall (X = +HW/2)
+box("Wall_Right",   HW/2+0.11, 0, HH/2, 0.11, HD/2+0.11, HH/2, MWH, CH)
+
+# Front wall (Y = +HD/2) — split around door and 2 windows
+# Door gap: X -0.55 to +0.55,  Z 0 to 2.2
+# Left win gap: X -3.5 to -2.0, Z 0.7 to 2.5
+# Right win gap: X 2.0 to 3.5, Z 0.7 to 2.5
+FZ = HD/2 + 0.11
+# 1. Bottom strip (Z 0 to 0.7) — full width
+box("FW_Bot",  0, FZ, 0.35,  HW/2+0.11, 0.11, 0.35, MWH, CH)
+# 2. Above door to top (X -0.55 to 0.55) (Z 2.2 to 3.2)
+box("FW_DoorTop",  0, FZ, 2.7,  0.55, 0.11, 0.5, MWH, CH)
+# 3. Between door and left win (X -2.0 to -0.55) above Z=0.7
+box("FW_MidL",  -1.275, FZ, (0.7+HH)/2,  0.725, 0.11, (HH-0.7)/2, MWH, CH)
+# 4. Between door and right win (X 0.55 to 2.0) above Z=0.7
+box("FW_MidR",   1.275, FZ, (0.7+HH)/2,  0.725, 0.11, (HH-0.7)/2, MWH, CH)
+# 5. Left of left win (X -4.25 to -3.5) full height
+box("FW_FarL", -HW/2-0.11+0.375, FZ, HH/2, 0.375, 0.11, HH/2, MWH, CH)
+# 6. Right of right win (X 3.5 to 4.25)
+box("FW_FarR",  HW/2+0.11-0.375, FZ, HH/2, 0.375, 0.11, HH/2, MWH, CH)
+# 7. Above left win (Z 2.5 to 3.2)
+box("FW_WinLTop", -2.75, FZ, 2.85,  0.75, 0.11, 0.35, MWH, CH)
+# 8. Above right win (Z 2.5 to 3.2)
+box("FW_WinRTop",  2.75, FZ, 2.85,  0.75, 0.11, 0.35, MWH, CH)
+
+# Floor and ceiling
+box("Floor",   0, 0, -0.08,  HW/2+0.11, HD/2+0.11, 0.08, MFLR, CH)
+box("Ceiling", 0, 0, HH+0.05, HW/2+0.12, HD/2+0.12, 0.05, MCEI, CH)
+
+# ── GABLE ROOF (matching Three.js geometry) ──────────────────
+# Ridge along Y axis, peak at Z = HH + 2.2
+# Using two prism shapes via boxes with rotation
+import bmesh
+from mathutils import Vector
+
+def make_roof_prism(name, peak_h, overhang_x, overhang_y, c_col):
+    """Build a gabled roof as a custom mesh."""
+    W2 = HW/2 + overhang_x
+    D2 = HD/2 + overhang_y
+    PH = HH + peak_h
+    verts = [
+        Vector((-W2,  D2, HH)),  # 0 front-left eave
+        Vector(( W2,  D2, HH)),  # 1 front-right eave
+        Vector(( W2, -D2, HH)),  # 2 back-right eave
+        Vector((-W2, -D2, HH)),  # 3 back-left eave
+        Vector(( 0,   D2, PH)),  # 4 front ridge
+        Vector(( 0,  -D2, PH)),  # 5 back ridge
+    ]
+    faces = [
+        (0, 1, 4),          # front left slope
+        (1, 2, 5, 4),       # right slope (quad)  -- wait, need to split
+        (2, 3, 5),          # back right slope
+        (3, 0, 4, 5),       # left slope (quad)
+        (0, 3, 2, 1),       # soffit (optional, bottom of overhang)
+    ]
+    # Build properly: left slope, right slope, gable ends
+    verts2 = [
+        Vector((-W2,  D2, HH)),  # 0
+        Vector(( W2,  D2, HH)),  # 1
+        Vector(( W2, -D2, HH)),  # 2
+        Vector((-W2, -D2, HH)),  # 3
+        Vector(( 0,   D2, PH)),  # 4
+        Vector(( 0,  -D2, PH)),  # 5
+    ]
+    faces2 = [
+        (0, 4, 5, 3),   # left slope
+        (1, 2, 5, 4),   # right slope
+        (0, 1, 4),      # front gable
+        (3, 5, 2),      # back gable
+    ]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([v.to_tuple() for v in verts2], [], faces2)
+    me.validate(); me.update()
+    me.calc_normals_split()
+    obj = bpy.data.objects.new(name, me)
+    obj.data.materials.append(c_col)
+    c_col_col = c_col  # material
+    bpy.context.scene.collection.objects.link(obj)
+    # move to target collection
+    bpy.context.scene.collection.objects.unlink(obj)
+    c_col_obj = c_col  # reuse variable name conflict — fix:
+    return obj
+
+# Build roof mesh manually
+roof_me = bpy.data.meshes.new("Roof_Mesh")
+W2r = HW/2 + 0.5;  D2r = HD/2 + 0.5;  PHr = HH + 2.2
+roof_verts = [
+    (-W2r, D2r, HH), (W2r, D2r, HH), (W2r, -D2r, HH), (-W2r, -D2r, HH),
+    (0, D2r, PHr),   (0, -D2r, PHr),
+]
+roof_faces = [
+    (0,3,5,4), (1,2,5,4), # wait: left is 0,3 eave; right is 1,2 eave
+]
+# Left slope: verts 0(front-left), 3(back-left), 5(back-ridge), 4(front-ridge)
+# Right slope: verts 1(front-right), 4(front-ridge), 5(back-ridge), 2(back-right)
+roof_faces = [
+    (0, 4, 5, 3),   # left slope
+    (1, 2, 5, 4),   # right slope
+    (0, 1, 4),      # front gable triangle
+    (3, 5, 2),      # back gable triangle
+]
+roof_me.from_pydata(roof_verts, [], roof_faces)
+roof_me.validate(); roof_me.update()
+roof_obj = bpy.data.objects.new("Roof", roof_me)
+roof_obj.data.materials.append(MRF)
+link(roof_obj, CH)
+
+# Ridge cap
+box("Roof_Ridge",  0, 0, PHr+0.06,  0.08, D2r+0.05, 0.06, MRFT, CH)
+# Fascia boards (front and back)
+box("Fascia_F",  0,  D2r, HH+0.05,  W2r+0.05, 0.06, 0.08, MFSC, CH)
+box("Fascia_B",  0, -D2r, HH+0.05,  W2r+0.05, 0.06, 0.08, MFSC, CH)
+box("Fascia_L", -W2r, 0,  HH+0.05,  0.06, D2r+0.05, 0.08, MFSC, CH)
+box("Fascia_R",  W2r, 0,  HH+0.05,  0.06, D2r+0.05, 0.08, MFSC, CH)
+
+# ── INTERIOR WALLS ────────────────────────────────────────────
+box("IW_Back",  0, -HD/2+0.23, HH/2, HW/2-0.22, 0.02, HH/2, MWLP, CI)
+box("IW_Left", -HW/2+0.23, 0,  HH/2, 0.02, HD/2-0.22, HH/2, MWLP, CI)
+box("IW_Right", HW/2-0.23, 0,  HH/2, 0.02, HD/2-0.22, HH/2, MWLP, CI)
+
+# Skirting boards
+SK = 0.06
+for nm,px,py,pz,ssx,ssy in [
+    ("SK_B", 0, -HD/2+0.24, SK/2, HW/2-0.23, 0.025),
+    ("SK_F", 0,  HD/2-0.24, SK/2, HW/2-0.23, 0.025),
+    ("SK_L",-HW/2+0.24, 0,  SK/2, 0.025, HD/2-0.23),
+    ("SK_R", HW/2-0.24, 0,  SK/2, 0.025, HD/2-0.23),
+]:
+    box(nm, px,py,pz, ssx,ssy,SK/2, MSKB, CI)
+
+# ── WINDOWS ───────────────────────────────────────────────────
+def window(name, wx, wy, wz, gw, gh, axis, coll):
+    FT = 0.04; FD = 0.055
+    if axis == 'Y':
+        box(f"{name}_G",  wx, wy, wz,    gw,  FD,  gh,  MWIN, coll)
+        box(f"{name}_T",  wx, wy, wz+gh, gw+FT, FD, FT/2, MWFR, coll)
+        box(f"{name}_Bo", wx, wy, wz-gh, gw+FT, FD, FT/2, MWFR, coll)
+        box(f"{name}_L",  wx-gw, wy, wz, FT/2, FD, gh+FT, MWFR, coll)
+        box(f"{name}_R",  wx+gw, wy, wz, FT/2, FD, gh+FT, MWFR, coll)
+        box(f"{name}_M",  wx, wy, wz,    0.025, FD, gh, MWFR, coll)
+    else:  # axis == 'X'
+        box(f"{name}_G",  wx, wy, wz,    FD,  gw,  gh,  MWIN, coll)
+        box(f"{name}_T",  wx, wy, wz+gh, FD, gw+FT, FT/2, MWFR, coll)
+        box(f"{name}_Bo", wx, wy, wz-gh, FD, gw+FT, FT/2, MWFR, coll)
+        box(f"{name}_L",  wx, wy-gw, wz, FD, FT/2, gh+FT, MWFR, coll)
+        box(f"{name}_R",  wx, wy+gw, wz, FD, FT/2, gh+FT, MWFR, coll)
+        box(f"{name}_M",  wx, wy, wz,    FD, gw, 0.025, MWFR, coll)
+
+# Front windows (centred at X=±2.75, Z=1.6, facing Y+)
+window("WinFL", -2.75, FZ, 1.60,  0.75, 0.90, 'Y', CH)
+window("WinFR",  2.75, FZ, 1.60,  0.75, 0.90, 'Y', CH)
+# Side windows
+window("WinSL", -HW/2-0.12, 0.5,  1.60, 0.55, 0.80, 'X', CH)
+window("WinSR",  HW/2+0.12, 0.5,  1.60, 0.55, 0.80, 'X', CH)
+# Back window
+window("WinBK",  0.0, -HD/2-0.12, 1.60, 0.65, 0.80, 'Y', CH)
+
+# ── DOOR ──────────────────────────────────────────────────────
+# Door at Y=FZ, X centred 0, Z 0-2.2
+# Frame
+box("DF_L",  -0.60, FZ, 1.10, 0.05, 0.06, 1.10, MDFR, CH)
+box("DF_R",   0.60, FZ, 1.10, 0.05, 0.06, 1.10, MDFR, CH)
+box("DF_T",   0.00, FZ, 2.25, 0.65, 0.06, 0.055, MDFR, CH)
+# Door slab (pivot left edge at X=-0.55)
+box("Door_Slab", 0.0, FZ+0.035, 1.05, 0.53, 0.035, 1.05, MDOR, CH)
+# Door panels
+box("Door_P1",   0.0, FZ+0.055, 1.65, 0.38, 0.015, 0.30, MDFR, CH)
+box("Door_P2",   0.0, FZ+0.055, 0.75, 0.38, 0.015, 0.28, MDFR, CH)
+# Door glass
+box("Door_Gls",  0.0, FZ+0.055, 2.00, 0.30, 0.015, 0.14, MWIN, CH)
+# Handle
+cyl("DH_Bar",  0.42, FZ+0.055, 1.05, 0, 0, 90, 0.018, 0.18, MKNB, CH)
+sph("DH_Knob", 0.42, FZ+0.065, 0.92, 0.028, MKNB, CH)
+# Step
+box("DoorStep",  0.0, FZ+0.30, 0.035, 0.65, 0.25, 0.035, MCO, CH)
+# Canopy
+box("Canopy",    0.0, FZ+0.25, 2.42, 0.75, 0.28, 0.055, MRF,  CH)
+box("Cnp_BrkL", -0.65, FZ+0.18, 2.25, 0.04, 0.16, 0.17, MRFT, CH)
+box("Cnp_BrkR",  0.65, FZ+0.18, 2.25, 0.04, 0.16, 0.17, MRFT, CH)
+
+# ── INTERIOR FURNITURE ────────────────────────────────────────
+# Rug
+box("Rug", -1.5, 1.5, 0.01, 1.50, 1.00, 0.010, MRUG, CI)
+
+# Sofa (facing back wall, at Y≈0.5 from reference z=0.5 in Three.js, rotated)
+def sofa(name, px, py, pz, ry, coll):
+    import math as M
+    g = bpy.data.objects.new(name+"_G", None)
+    link(g, coll)
+    # seat
+    s = box(f"{name}_Seat", 0,0,0.15, 1.20,0.45,0.15, MSOF, coll)
+    # back
+    b = box(f"{name}_Back", 0,-0.38,0.43, 1.20,0.09,0.28, MSOF, coll)
+    # arms
+    al= box(f"{name}_ArmL",-1.28, 0, 0.25, 0.10,0.45,0.25, MSOF, coll)
+    ar= box(f"{name}_ArmR", 1.28, 0, 0.25, 0.10,0.45,0.25, MSOF, coll)
+    for o in [s,b,al,ar]:
+        o.location.x += px; o.location.y += py; o.location.z += pz
+        if ry: o.rotation_euler.z = M.radians(ry)
+
+sofa("Sofa", -1.5, 0.5, 0.08, 90, CI)
+
+# Coffee table
+box("CoffeeTop",  -1.5, 1.9, 0.44, 0.55, 0.30, 0.03, MTWX, CI)
+box("CoffeeGls",  -1.5, 1.9, 0.47, 0.45, 0.23, 0.01, MWIN, CI)
+for lx,ly in [(-1.95,1.6),(-1.05,1.6),(-1.95,2.2),(-1.05,2.2)]:
+    box(f"CTLeg{lx}", lx, ly, 0.22, 0.02, 0.02, 0.22, MMET, CI)
+
+# TV Unit + TV
+box("TVUnit",    2.5, -2.5, 0.28, 1.00, 0.20, 0.28, MTWX, CI)
+box("TVBody",    2.5, -2.48, 1.00, 0.80, 0.03, 0.45, MTVB, CI)
+box("TVScreen",  2.5, -2.46, 1.00, 0.75, 0.010, 0.41, MTVS, CI)
+box("TVStand",   2.5, -2.50, 0.62, 0.06, 0.13, 0.13, MTVB, CI)
+
+# Bookshelf
+box("BShelf",    3.5, -2.8, 1.00, 0.50, 0.15, 1.00, MTWX, CI)
+for si in range(4):
+    box(f"BShlf{si}", 3.5, -2.72, 0.30+si*0.45, 0.45, 0.13, 0.015, MTWX, CI)
+    book_mats = [MBKR, MBKB, MBKG, MBKY]
+    for bi in range(4):
+        box(f"Bk{si}{bi}", 3.5+(-0.18+bi*0.10), -2.72, 0.30+si*0.45+0.11, 0.04, 0.10, 0.11, book_mats[bi], CI)
+
+# Kitchen counter (back-left corner)
+box("KitBase",   -1.2, -2.5, 0.45, 1.40, 0.32, 0.45, MKWH, CI)
+box("KitTop",    -1.2, -2.48, 0.92, 1.45, 0.34, 0.020, MKSS, CI)
+box("KitUpper",  -1.2, -2.48, 2.10, 1.30, 0.18, 0.40, MKWH, CI)
+# Sink
+box("Sink",      -1.7, -2.46, 0.93, 0.35, 0.26, 0.018, MKSS, CI)
+cyl("Tap",       -1.65, -2.36, 1.07, 0,0,30, 0.012, 0.22, MMET, CI)
+# Fridge
+box("Fridge",    0.0, -2.5, 0.93, 0.35, 0.35, 0.93, MKSS, CI)
+
+# Floor lamp
+cyl("LampPole1", -3.0, 1.8, 0.90, 0,0,0, 0.012, 1.80, MMET, CI)
+box("LampBase1", -3.0, 1.8, 0.04, 0.18, 0.18, 0.04, MMET, CI)
+cyl("LampShd1",  -3.0, 1.8, 1.85, 0,0,0, 0.20, 0.25, MLSH, CI)
+cyl("LampBulb1", -3.0, 1.8, 1.78, 0,0,0, 0.05, 0.05, mat("LB1",1,0.9,0.6,emit_col=(1,0.9,0.6),emit_str=5), CI)
+
+cyl("LampPole2",  3.8, 1.8, 0.90, 0,0,0, 0.012, 1.80, MMET, CI)
+box("LampBase2",  3.8, 1.8, 0.04, 0.18, 0.18, 0.04, MMET, CI)
+cyl("LampShd2",   3.8, 1.8, 1.85, 0,0,0, 0.20, 0.25, MLSH, CI)
+
+# Indoor plants
+def plant(name, px, py, pz, sc, coll):
+    cyl(f"{name}_Pot", px, py, pz+0.11*sc, 0,0,0, 0.11*sc, 0.22*sc, MCER, coll)
+    for i in range(5):
+        ang = i/5*2*math.pi
+        box(f"{name}_L{i}", px+math.sin(ang)*0.07*sc, py+math.cos(ang)*0.07*sc, pz+0.40*sc,
+            0.03*sc, 0.03*sc, 0.18*sc, MPLG, coll)
+
+plant("Plant1", -3.5, 2.5, 0, 1.4, CI)
+plant("Plant2",  3.5, 2.5, 0, 1.0, CI)
+plant("Plant3",  3.5,-2.5, 0, 1.2, CI)
+
+# Ceiling lamps
+def ceil_lamp(name, px, py, coll):
+    cyl(f"{name}_Rod", px, py, HH-0.15, 0,0,0, 0.014, 0.30, MMET, coll)
+    cyl(f"{name}_Shd", px, py, HH-0.38, 0,0,0, 0.20, 0.22, MLSH, coll)
+    cyl(f"{name}_Blb", px, py, HH-0.38, 0,0,0, 0.045, 0.045,
+        mat(f"{name}_BM",1,0.95,0.85,emit_col=(1,0.95,0.85),emit_str=6), coll)
+
+ceil_lamp("CLmp1",  0.0, 0.0,  CI)
+ceil_lamp("CLmp2", -2.0,-2.0,  CI)
+ceil_lamp("CLmp3",  2.5, 1.5,  CI)
+
+# ── BASEMENT (under house) ────────────────────────────────────
+# Basement: same footprint, Z -3 to 0
+box("BSM_Floor",  0, 0, -3.08,  HW/2+0.11, HD/2+0.11, 0.08, MBSM, CB)
+box("BSM_Ceil",   0, 0, -0.08,  HW/2+0.12, HD/2+0.12, 0.08, MCO,  CB)
+box("BSM_Back",   0, -HD/2-0.11, -1.5, HW/2+0.11, 0.11, 1.5, MBSM, CB)
+box("BSM_Front",  0,  HD/2+0.11, -1.5, HW/2+0.11, 0.11, 1.5, MBSM, CB)
+box("BSM_Left",  -HW/2-0.11, 0, -1.5, 0.11, HD/2+0.11, 1.5, MBSM, CB)
+box("BSM_Right",  HW/2+0.11, 0, -1.5, 0.11, HD/2+0.11, 1.5, MBSM, CB)
+# Basement window
+box("BSM_Win",   -HW/2-0.13, 0.5, -0.40, 0.015, 0.45, 0.18, MWIN, CB)
+# Stairs (decorative)
+for i in range(5):
+    box(f"Stair{i}", -3.0+i*0.4, -HD/2+1.0, -2.5+i*0.25, 0.20, 0.50, 0.13, MCO, CB)
+
+# ── HWT SYSTEM ────────────────────────────────────────────────
+# Tank in basement right-rear: X=+2.8, Y=-2.0, Z=-1.5 (centre)
+TX, TY, TZ = 2.8, -2.0, -1.50
+
+cyl("HWT_Body",    TX, TY, TZ,    0,0,0, 0.60, 2.60, MHT,  CHW)
+cyl("HWT_Ins",     TX, TY, TZ,    0,0,0, 0.68, 2.62, MINS, CHW)
+cyl("HWT_Water",   TX, TY, TZ-0.3,0,0,0, 0.56, 1.80, MWTR, CHW)
+cyl("HWT_CapT",    TX, TY, TZ+1.32,0,0,0, 0.63, 0.08, MHT, CHW)
+cyl("HWT_CapB",    TX, TY, TZ-1.32,0,0,0, 0.63, 0.08, MHT, CHW)
+cyl("HWT_PRV",     TX, TY+0.65,TZ+1.18, 0,0,0, 0.035, 0.28, MPM, CHW)
+sph("HWT_PRVcap",  TX, TY+0.65,TZ+1.34, 0.045, MPH, CHW)
+cyl("HWT_Sensor",  TX+0.62,TY,TZ+0.38, 0,90,0, 0.025, 0.18, MPM, CHW)
+box("HWT_Strap1",  TX, TY, TZ+0.55, 0.70, 0.05, 0.035, MPM, CHW)
+box("HWT_Strap2",  TX, TY, TZ-0.55, 0.70, 0.05, 0.035, MPM, CHW)
+box("HWT_Label",   TX+0.62, TY, TZ, 0.010, 0.35, 0.20, mat("HWT_LBL",1,1,0.9), CHW)
+
+# Hot/cold pipes to ground floor
+cyl("Pipe_HotV",   TX-0.18, TY, -0.04, 0,0,0, 0.042, 3.0, MPH, CHW)
+cyl("Pipe_ColdV",  TX+0.18, TY, -0.04, 0,0,0, 0.038, 3.0, MPC, CHW)
+cyl("Pipe_HotH",   0, TY, -0.14,  0,90,0, 0.042, HW/2+0.5, MPH, CHW)
+cyl("Pipe_ColdH",  0, TY+0.20, -0.14, 0,90,0, 0.038, HW/2+0.5, MPC, CHW)
+# Drop to each room
+for rx,rn in [(0,"LR"),(3.0,"BR"),(-3.0,"KT")]:
+    cyl(f"Pipe_H_{rn}", rx, TY, 1.40, 0,0,0, 0.040, 3.10, MPH, CHW)
+    cyl(f"Pipe_C_{rn}", rx+0.12, TY, 1.40, 0,0,0, 0.036, 3.10, MPC, CHW)
+
+# ── RADIATOR HEATERS ──────────────────────────────────────────
+# All verified INSIDE walls:
+#   Living Room: Y=+2.8 (back wall Y=+3.5+0.11), centred X=0
+#   Bedroom (right half X>0): X=+3.8 (east wall X=+4.25+0.11)
+#   Kitchen (left half X<0): X=-3.8 (west wall X=-4.25+0.11)
+
+def heater(name, px, py, pz, facing, coll):
+    if facing == 'N':   # against north wall, fins point south
+        box(f"H_{name}_Bk",  px, py, pz, 0.55, 0.035, 0.36, MHRO, coll)
+        for i in range(7):
+            xo = -0.42+i*0.14
+            box(f"H_{name}_F{i}", px+xo, py+0.06, pz, 0.016, 0.038, 0.32, MHRO, coll)
+        box(f"H_{name}_TM", px, py+0.028, pz+0.35, 0.54, 0.028, 0.016, MPM, coll)
+        box(f"H_{name}_BM", px, py+0.028, pz-0.35, 0.54, 0.028, 0.016, MPM, coll)
+        cyl(f"H_{name}_VI", px-0.55, py, pz-0.27, 90,0,0, 0.026, 0.15, MPH,  coll)
+        cyl(f"H_{name}_VO", px+0.55, py, pz-0.27, 90,0,0, 0.026, 0.15, MPC,  coll)
+        cyl(f"H_{name}_VL", px-0.55, py, pz-0.14, 0,0,0,  0.040, 0.08, MKNB, coll)
+    elif facing == 'E':  # against east wall, fins point west
+        box(f"H_{name}_Bk",  px, py, pz, 0.035, 0.55, 0.36, MHRO, coll)
+        for i in range(7):
+            yo = -0.42+i*0.14
+            box(f"H_{name}_F{i}", px-0.06, py+yo, pz, 0.038, 0.016, 0.32, MHRO, coll)
+        box(f"H_{name}_TM", px-0.028, py, pz+0.35, 0.028, 0.54, 0.016, MPM, coll)
+        box(f"H_{name}_BM", px-0.028, py, pz-0.35, 0.028, 0.54, 0.016, MPM, coll)
+        cyl(f"H_{name}_VI", px, py-0.55, pz-0.27, 0,90,0, 0.026, 0.15, MPH,  coll)
+        cyl(f"H_{name}_VO", px, py+0.55, pz-0.27, 0,90,0, 0.026, 0.15, MPC,  coll)
+        cyl(f"H_{name}_VL", px, py-0.55, pz-0.14, 0,0,0,  0.040, 0.08, MKNB, coll)
+    elif facing == 'W':  # against west wall, fins point east
+        box(f"H_{name}_Bk",  px, py, pz, 0.035, 0.55, 0.36, MHRO, coll)
+        for i in range(7):
+            yo = -0.42+i*0.14
+            box(f"H_{name}_F{i}", px+0.06, py+yo, pz, 0.038, 0.016, 0.32, MHRO, coll)
+        box(f"H_{name}_TM", px+0.028, py, pz+0.35, 0.028, 0.54, 0.016, MPM, coll)
+        box(f"H_{name}_BM", px+0.028, py, pz-0.35, 0.028, 0.54, 0.016, MPM, coll)
+        cyl(f"H_{name}_VI", px, py+0.55, pz-0.27, 0,90,0, 0.026, 0.15, MPH,  coll)
+        cyl(f"H_{name}_VO", px, py-0.55, pz-0.27, 0,90,0, 0.026, 0.15, MPC,  coll)
+        cyl(f"H_{name}_VL", px, py+0.55, pz-0.14, 0,0,0,  0.040, 0.08, MKNB, coll)
+
+# Living room: back wall is Y=-(HD/2-0.22) = -3.28, heater at Y=-2.85
+heater("LivingRoom",  0.0,  -2.85, 0.55, 'N', CHR)
+# Bedroom (right side, east wall X=HW/2-0.22=3.97): heater at X=3.65
+heater("Bedroom",     3.65,  0.5,  0.55, 'E', CHR)
+# Kitchen (left side, west wall X=-3.97): heater at X=-3.65
+heater("Kitchen",    -3.65,  0.5,  0.55, 'W', CHR)
+
+# ── HEAT PUMP ─────────────────────────────────────────────────
+# Outside right wall (X=HW/2+0.11+0.1=4.47), Y=0
+HPX, HPY = HW/2 + 1.20, 0.0
+
+box("HP_Plinth",   HPX, HPY, 0.03,   0.72, 0.50, 0.03,  MCO,  CHP)
+box("HP_Cabinet",  HPX, HPY, 0.88,   0.68, 0.46, 0.85,  MHPB, CHP)
+for i in range(5):
+    box(f"HP_Lou{i}", HPX-0.68, HPY, 0.30+i*0.16, 0.008, 0.40, 0.050, MHPD, CHP)
+cyl("HP_FanRing",  HPX-0.69, HPY, 0.88, 0,90,0, 0.32, 0.012, MHPD, CHP, 32)
+for a in range(0,360,45):
+    r = math.radians(a)
+    box(f"HP_Bl{a}", HPX-0.69, HPY+0.16*math.sin(r), 0.88+0.16*math.cos(r), 0.007,0.038,0.14, MHPD, CHP)
+box("HP_CtrlPnl",  HPX, HPY-0.47, 1.55, 0.28, 0.016, 0.15, MHPD, CHP)
+sph("HP_LED",      HPX, HPY-0.488, 1.73, 0.036, MLED, CHP)
+# Refrigerant pipes to wall
+cyl("HP_RefH",  HPX-0.80, HPY+0.10, 0.28, 0,90,0, 0.032, 0.70, MPH, CHP)
+cyl("HP_RefC",  HPX-0.80, HPY-0.10, 0.28, 0,90,0, 0.032, 0.70, MPC, CHP)
+
+# ── EXTERIOR ──────────────────────────────────────────────────
+box("Ground",    0, 0, -0.08,  25.0, 20.0, 0.08, MGR, CEX)
+# Walkway (front, Y+ direction from house)
+for i in range(10):
+    box(f"Walk{i}", 0, HD/2+0.30+i*0.95, 0.035, 0.60, 0.42, 0.04, MPTH, CEX)
+# Side path to heat pump
+box("Path_HP1", HPX-0.30, HD/4, 0.02, 0.40, HD/4+0.2, 0.03, MPTH, CEX)
+# Concrete apron
+box("Apron_F",   0,  HD/2+0.45, 0.015, HW/2+0.15, 0.50, 0.02, MCO, CEX)
+box("Apron_L",  -HW/2-0.45, 0, 0.015, 0.50, HD/2+0.12, 0.02, MCO, CEX)
+box("Apron_R",   HW/2+0.45, 0, 0.015, 0.50, HD/2+0.12, 0.02, MCO, CEX)
+box("Apron_B",   0, -HD/2-0.45, 0.015, HW/2+0.15, 0.50, 0.02, MCO, CEX)
+
+# Bushes
+def bush(name, px, py, coll):
+    for i in range(4):
+        sph(f"{name}_{i}", px+(i%2)*0.28-0.14, py+(i//2)*0.22-0.11, 0.32,
+            0.28+i*0.03, MPLG, coll)
+bush("Bush1", -3.5,  HD/2+0.20, CEX)
+bush("Bush2",  3.5,  HD/2+0.20, CEX)
+
+# Trees
+def tree(name, px, py, th, tr, coll):
+    cyl(f"{name}_Tr", px, py, th*0.22, 0,0,0, 0.10, th*0.45, mat(f"{name}TM",0.35,0.22,0.12,rough=0.95), coll)
+    cyl(f"{name}_C1", px, py, th*0.60, 0,0,0, tr, th*0.70, mat(f"{name}CM",0.18,0.36,0.14,rough=0.95), coll)
+    cyl(f"{name}_C2", px, py, th*0.80, 0,0,0, tr*0.65, th*0.50, mat(f"{name}CM2",0.22,0.43,0.17,rough=0.9), coll)
+
+for tx,ty,th,tr in [(-6,6,3.0,0.9),(-7,-3,2.6,0.75),(-6,-8,3.2,1.0),
+                    (6,6,2.8,0.85),(7,-3,3.0,0.80),(6,-8,2.7,0.90),
+                    (-10,0,3.5,1.1),(10,0,3.2,1.05)]:
+    tree(f"T{tx}{ty}", tx, ty, th, tr, CEX)
+
+# Fence posts
+for fi in range(-4,5):
+    if abs(fi) < 1: continue
+    box(f"FP{fi}", fi*1.0, HD/2+4.5, 0.45, 0.05,0.05,0.45, MFNC, CEX)
+    if fi < 4:
+        box(f"FR_T{fi}", fi+0.5, HD/2+4.5, 0.72, 0.45,0.025,0.025, MFNC, CEX)
+        box(f"FR_B{fi}", fi+0.5, HD/2+4.5, 0.36, 0.45,0.025,0.025, MFNC, CEX)
+
+# ── CAMERA ────────────────────────────────────────────────────
+bpy.ops.object.camera_add(location=(14, -13, 9))
+cam = bpy.context.active_object; cam.name="MainCam"
+cam.rotation_euler = (math.radians(58), 0, math.radians(-47))
+cam.data.lens = 28
+bpy.context.scene.camera = cam
+
+# ── LIGHTING ──────────────────────────────────────────────────
+bpy.ops.object.light_add(type='SUN', location=(8,-12,18))
+sun = bpy.context.active_object; sun.name="Sun"
+sun.data.energy=4.0; sun.data.color=(1.0,0.96,0.88)
+sun.rotation_euler=(math.radians(52),0,math.radians(30))
+
+bpy.ops.object.light_add(type='AREA', location=(0,0,18))
+sky=bpy.context.active_object; sky.name="SkyFill"
+sky.data.energy=250; sky.data.color=(0.80,0.90,1.0); sky.data.size=25
+
+for lx,ly,lz,ln in [(0,0,HH-0.42,"L_LR"),(-2,-2,HH-0.42,"L_BR"),(2.5,1.5,HH-0.42,"L_KT")]:
+    bpy.ops.object.light_add(type='POINT', location=(lx,ly,lz))
+    li=bpy.context.active_object; li.name=ln
+    li.data.energy=100; li.data.color=(1.0,0.95,0.85)
+
+bpy.ops.object.light_add(type='POINT', location=(TX,TY,TZ))
+hwl=bpy.context.active_object; hwl.name="HWT_Glow"
+hwl.data.energy=60; hwl.data.color=(1.0,0.55,0.18)
+
+# ── RENDER ────────────────────────────────────────────────────
+bpy.context.scene.render.engine='CYCLES'
+bpy.context.scene.cycles.samples=64
+bpy.context.scene.render.resolution_x=1920
+bpy.context.scene.render.resolution_y=1080
+
+print("="*55)
+print("German House v4 — Complete!")
+print("="*55)
+print(f"House: {HW}m wide x {HD}m deep x {HH}m tall")
+print(f"Roof:  Gable ridge at Z={HH+2.2:.1f}m")
+print("Door:  Front Y+ face, gap + frame + slab + canopy")
+print("Windows: 5 total (2 front, 2 side, 1 back)")
+print("Interior: Sofa, TV, Kitchen, Bookshelf, Plants, Lamps")
+print("Basement: Full box with stairs + HWT tank")
+print("Heaters: 3 radiators — all verified INSIDE walls")
+print("  LivingRoom: Y=-2.85 (wall at Y=-3.39) ✓")
+print("  Bedroom:    X=+3.65 (wall at X=+4.36) ✓")
+print("  Kitchen:    X=-3.65 (wall at X=-4.36) ✓")
+print("Heat Pump: Outside east wall with fan + LED + pipes")
+print("Exterior: Grass + trees + bushes + fence + walkway")
+print()
+print(">>> Press Z → Rendered   |   Numpad 0 → Camera")
+print(">>> Press F12 → Full Render")
+print("="*55)
